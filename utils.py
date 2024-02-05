@@ -30,7 +30,9 @@ model_mapping = {
     "deberta-mnli": "microsoft/deberta-xxlarge-v2-mnli",
     "deberta": "microsoft/deberta-xxlarge-v2",
     "roberta-mnli": "roberta-large-mnli",
-}
+    "llama2-7b": "meta-llama/Llama-2-7b-hf",
+    "llama2-7b-chat": "meta-llama/Llama-2-7b-chat-hf"
+    }
 
 
 def get_parser():
@@ -346,6 +348,8 @@ def get_individual_hidden_states(model, batch_ids, layer=None, all_layers=True, 
     # forward pass
     with torch.no_grad():
         batch_ids = batch_ids.to(model.device)
+        # for k in batch_ids:
+        #     batch_ids[k] = batch_ids[k].to(model.device)
         output = model(**batch_ids, output_hidden_states=True)
 
     # get all the corresponding hidden states (which is a tuple of length num_layers)
@@ -372,7 +376,7 @@ def get_individual_hidden_states(model, batch_ids, layer=None, all_layers=True, 
         # first we need to get the first mask location for each example in the batch
         assert token_idx < 0, print("token_idx must be either 0 or negative, but got", token_idx)
         mask = batch_ids["decoder_attention_mask"] if (model_type == "encoder_decoder" and use_decoder) else batch_ids["attention_mask"]
-        first_mask_loc = get_first_mask_loc(mask).squeeze()
+        first_mask_loc = get_first_mask_loc(mask).squeeze().cpu()
         final_hs = hs[torch.arange(hs.size(0)), first_mask_loc+token_idx]  # (bs, dim, num_layers)
     
     return final_hs
