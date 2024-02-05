@@ -18,6 +18,15 @@ from promptsource.templates import DatasetTemplates
 from transformers import AutoTokenizer, AutoModelForSeq2SeqLM, AutoModelForMaskedLM, AutoModelForCausalLM
 from datasets import load_dataset
 
+from peft import (
+    LoraConfig,
+    PeftModel,
+    get_peft_model,
+    get_peft_model_state_dict,
+    prepare_model_for_int8_training,
+    set_peft_model_state_dict,
+)
+
 
 ############# Model loading and result saving #############
 
@@ -70,22 +79,34 @@ def load_model(model_name, cache_dir=None, parallelize=False, device="cuda"):
     if model_name in model_mapping:
         # use a nickname for our models
         full_model_name = model_mapping[model_name]
+
+    elif model_name == "llama2-7b-lora-ft":
+        lora_adapter = "/scratch/jax4zk/llm-finetuning/lora-finetuning/llamma-finetune"
+        model = AutoModelForCausalLM.from_pretrained("meta-llama/Llama-2-7b-hf", cache_dir=cache_dir)
+        model = PeftModel.from_pretrained(
+            model,
+            lora_adapter,
+            torch_dtype=torch.float16)
+        model_type = "decoder"
+        full_model_name = "meta-llama/Llama-2-7b-hf"
     else:
         # if you're trying a new model, make sure it's the full name
         full_model_name = model_name
 
-    # use the right automodel, and get the corresponding model type
-    try:
-        model = AutoModelForSeq2SeqLM.from_pretrained(full_model_name, cache_dir=cache_dir)
-        model_type = "encoder_decoder"
-    except:
+
+    if model_name != "llama2-7b-lora-ft":
+        # use the right automodel, and get the corresponding model type
         try:
-            model = AutoModelForMaskedLM.from_pretrained(full_model_name, cache_dir=cache_dir)
-            model_type = "encoder"
+            model = AutoModelForSeq2SeqLM.from_pretrained(full_model_name, cache_dir=cache_dir)
+            model_type = "encoder_decoder"
         except:
-            model = AutoModelForCausalLM.from_pretrained(full_model_name, cache_dir=cache_dir)
-            model_type = "decoder"
-    
+            try:
+                model = AutoModelForMaskedLM.from_pretrained(full_model_name, cache_dir=cache_dir)
+                model_type = "encoder"
+            except:
+                model = AutoModelForCausalLM.from_pretrained(full_model_name, cache_dir=cache_dir)
+                model_type = "decoder"
+        
         
     # specify model_max_length (the max token length) to be 512 to ensure that padding works 
     # (it's not set by default for e.g. DeBERTa, but it's necessary for padding to work properly)
@@ -247,7 +268,7 @@ class ContrastDataset(Dataset):
     def __getitem__(self, index):
         # get the original example
         data = self.raw_dataset[int(index)]
-        text, true_answer = data["text"], data["label"]
+        goal, true_answer, sol1, sol2 = data["goal"], data["label"], data["sol1"], data["sol2"]
 
         # get the possible labels
         # (for simplicity assume the binary case for contrast pairs)
@@ -255,12 +276,16 @@ class ContrastDataset(Dataset):
         assert len(label_list) == 2, print("Make sure there are only two possible answers! Actual number of answers:", label_list)
 
         # reconvert to dataset format but with fake/candidate labels to create the contrast pair
-        neg_example = {"text": text, "label": 0}
-        pos_example = {"text": text, "label": 1}
+        neg_example = {"goal": goal, "label": 0, "sol1": sol1, "sol2":sol2}
+        pos_example = {"goal": goal, "label": 1, "sol1": sol1, "sol2": sol2}
 
         # construct contrast pairs by answering the prompt with the two different possible labels
         # (for example, label 0 might be mapped to "no" and label 1 might be mapped to "yes")
         neg_prompt, pos_prompt = self.prompt.apply(neg_example), self.prompt.apply(pos_example)
+
+        # print("neg_prompt: " + str(neg_prompt))
+        # print("pos_prompt: " + str(pos_prompt))
+        # return
 
         # tokenize
         neg_ids, pos_ids = self.encode(neg_prompt), self.encode(pos_prompt)
@@ -269,7 +294,8 @@ class ContrastDataset(Dataset):
         if self.use_decoder and self.model_type == "encoder_decoder":
             assert (neg_ids["decoder_input_ids"] - pos_ids["decoder_input_ids"]).sum() != 0, print("The decoder_input_ids for the contrast pairs are the same!", neg_ids, pos_ids)
         else:
-            assert (neg_ids["input_ids"] - pos_ids["input_ids"]).sum() != 0, print("The input_ids for the contrast pairs are the same!", neg_ids, pos_ids)
+            assert (not torch.equal(neg_ids["input_ids"], pos_ids["input_ids"])), print("The input_ids for the positive and negative statements were equal!")
+            # assert (neg_ids["input_ids"].float() - pos_ids["input_ids"].float()).sum() != 0, print("The input_ids for the contrast pairs are the same!", neg_ids, pos_ids, neg_prompt, pos_prompt, neg_ids["input_ids"] - pos_ids["input_ids"].sum())
 
         # return the tokenized inputs, the text prompts, and the true label
         return neg_ids, pos_ids, neg_prompt, pos_prompt, true_answer
