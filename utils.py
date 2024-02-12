@@ -40,7 +40,9 @@ model_mapping = {
     "deberta": "microsoft/deberta-xxlarge-v2",
     "roberta-mnli": "roberta-large-mnli",
     "llama2-7b": "meta-llama/Llama-2-7b-hf",
-    "llama2-7b-chat": "meta-llama/Llama-2-7b-chat-hf"
+    "llama2-7b-chat": "meta-llama/Llama-2-7b-chat-hf",
+    "mistral-7b": "mistralai/Mistral-7B-v0.1",
+    "mistral-7b-instruct": "mistralai/Mistral-7B-Instruct-v0.1"
     }
 
 
