@@ -268,7 +268,12 @@ class ContrastDataset(Dataset):
     def __getitem__(self, index):
         # get the original example
         data = self.raw_dataset[int(index)]
-        goal, true_answer, sol1, sol2 = data["goal"], data["label"], data["sol1"], data["sol2"]
+        text, true_answer = data["text"], data["label"]
+
+        # goal, true_answer, sol1, sol2 = data["goal"], data["label"], data["sol1"], data["sol2"]
+
+        # text, label = data["text"], data["label"]
+        # false_label = (label + 1) % 4 # get the subsequent label
 
         # get the possible labels
         # (for simplicity assume the binary case for contrast pairs)
@@ -276,16 +281,13 @@ class ContrastDataset(Dataset):
         assert len(label_list) == 2, print("Make sure there are only two possible answers! Actual number of answers:", label_list)
 
         # reconvert to dataset format but with fake/candidate labels to create the contrast pair
-        neg_example = {"goal": goal, "label": 0, "sol1": sol1, "sol2":sol2}
-        pos_example = {"goal": goal, "label": 1, "sol1": sol1, "sol2": sol2}
+
+        neg_example = {"text": text, "label": 0}
+        pos_example = {"text": text, "label": 1}
 
         # construct contrast pairs by answering the prompt with the two different possible labels
         # (for example, label 0 might be mapped to "no" and label 1 might be mapped to "yes")
         neg_prompt, pos_prompt = self.prompt.apply(neg_example), self.prompt.apply(pos_example)
-
-        # print("neg_prompt: " + str(neg_prompt))
-        # print("pos_prompt: " + str(pos_prompt))
-        # return
 
         # tokenize
         neg_ids, pos_ids = self.encode(neg_prompt), self.encode(pos_prompt)
@@ -320,18 +322,20 @@ def get_dataloader(dataset_name, split, tokenizer, prompt_idx, batch_size=16, nu
                                        device=device)
 
     # get a random permutation of the indices; we'll take the first num_examples of these that do not get truncated
-    random_idxs = np.random.permutation(len(contrast_dataset))
+    # random_idxs = np.random.permutation(len(contrast_dataset))
 
     # remove examples that would be truncated (since this messes up contrast pairs)
     prompt_name_list = list(all_prompts.name_to_id_mapping.keys())
     prompt = all_prompts[prompt_name_list[prompt_idx]]
     keep_idxs = []
-    for idx in random_idxs:
+
+    for idx in range(len(contrast_dataset)):
         question, answer = prompt.apply(raw_dataset[int(idx)])
         input_text = question + " " + answer
-        if len(tokenizer.encode(input_text, truncation=False)) < tokenizer.model_max_length - 2:  # include small margin to be conservative
+        if len(tokenizer.encode(input_text, truncation=False)) < 4096 - 2:  # include small margin to be conservative
+        # if len(tokenizer.encode(input_text, truncation=False)) < tokenizer.model_max_length - 2:  # include small margin to be conservative
             keep_idxs.append(idx)
-            if len(keep_idxs) >= num_examples:
+            if len(keep_idxs) >= num_examples:  # break if we have enough examples
                 break
 
     # create and return the corresponding dataloader
